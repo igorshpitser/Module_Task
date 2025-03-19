@@ -1,0 +1,190 @@
+with union_cte_1 as(
+  select
+        sp.country,
+        a.send_interval,
+        a.is_verified,
+        a.is_unsubscribed,
+        DATE_ADD(s.date, INTERVAL es.sent_date DAY)
+        new_date,
+
+
+        count(distinct eo.id_message) as open_msg,
+        count(distinct es.id_message) as sent_msg,
+        count(distinct ev.id_message) as visit_msg,
+       
+
+
+ from `DA.email_sent` es
+ left join `DA.email_open` eo
+ on es.id_message = eo.id_message
+ left join `DA.email_visit` ev
+ on es.id_message = ev.id_message
+ JOIN `DA.account_session` acs
+ ON es.id_account = acs.account_id
+ JOIN `DA.session` s
+ ON acs.ga_session_id = s.ga_session_id
+ join `DA.account` a
+ on a.id = es.id_account
+ join `DA.session_params` sp
+ on s.ga_session_id = sp.ga_session_id
+
+
+
+
+group by new_date, sp.country, a.send_interval, a.is_verified, a.is_unsubscribed
+),
+
+
+
+
+union_cte_2 as(
+
+
+select
+     sp.country,
+     a.send_interval,
+     a.is_verified,
+     a.is_unsubscribed,
+     s.date as new_date,
+
+
+     count(distinct account_id) as account_cnt
+
+
+
+
+from `DA.account_session` acs
+join `DA.session` s
+on acs.ga_session_id = s.ga_session_id
+
+
+join `DA.account` a
+on a.id = acs.account_id
+
+
+join `DA.session_params` sp
+on sp.ga_session_id = acs.ga_session_id
+
+
+group by s.date,sp.country, a.send_interval, a.is_verified, a.is_unsubscribed
+),
+
+
+
+
+--// об'єдную таблиці, де є union_cte
+
+
+
+
+join_union as(
+     
+      select
+
+
+           new_date,
+
+
+           country,
+           send_interval,
+           is_verified,
+           is_unsubscribed,
+
+
+           0 as account_cnt,
+
+
+           open_msg,
+           sent_msg,
+           visit_msg
+
+
+
+
+      from union_cte_1 u1
+
+
+      union all
+     
+      select
+      new_date,
+
+
+      country,
+      send_interval,
+      is_verified,
+      is_unsubscribed,
+
+
+      account_cnt,
+
+
+      0 as open_msg,
+      0 as sent_msg,
+      0 as visit_msg
+
+
+
+
+      from union_cte_2
+
+
+
+
+),
+
+
+--/// використовую для додавання віконних функцій
+second_cte as(
+select
+      new_date,
+      country,
+      send_interval,
+      is_verified,
+      is_unsubscribed,
+
+
+      sum(coalesce(account_cnt, 0)) as account_cnt,
+
+
+      sum(coalesce(sent_msg, 0)) as sent_msg,
+      sum(coalesce(open_msg, 0)) as open_msg,
+      sum(coalesce(visit_msg, 0)) as visit_msg,
+
+
+from join_union
+
+
+group by new_date, country, send_interval, is_verified, is_unsubscribed
+
+
+),
+
+
+sum_cte as(
+SELECT *,
+ DENSE_RANK() OVER(ORDER BY total_country_account_cnt DESC) AS rank_total_country_account_cnt,
+   DENSE_RANK() OVER(ORDER BY total_country_sent_cnt DESC) AS rank_total_country_sent_cnt
+FROM (
+   select
+   country,
+   sum(account_cnt) as total_country_account_cnt,
+   sum(sent_msg) as total_country_sent_cnt,
+   from second_cte
+   group by country
+))
+
+
+
+
+
+
+select *
+from second_cte
+
+
+join sum_cte sc
+on sc.country = second_cte.country
+
+
+where sc.rank_total_country_account_cnt <= 10 or sc.rank_total_country_sent_cnt <= 10
